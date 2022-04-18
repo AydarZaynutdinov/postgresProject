@@ -2,54 +2,67 @@ package main
 
 import (
 	"fmt"
-	"postgresProject/dao"
+	mux "github.com/gorilla/mux"
+	"log"
+	"net/http"
+	"os"
 	"postgresProject/db"
+	"postgresProject/db/repository"
+	"postgresProject/service"
+	"strconv"
+)
+
+const (
+	defaultHost = "localhost"
+	defaultPort = 8080
+
+	hostKey = "HOST"
+	portKey = "PORT"
 )
 
 func main() {
-	conn, err := db.GetConn()
+	pool, err := db.InitDb()
 	if err != nil {
-		panic(err)
+		log.Printf("Error during init db: %s", err)
+		os.Exit(-1)
 	}
-	defer conn.Close()
+	defer pool.Close()
 
-	fmt.Println("Users before:")
-	// get users
-	users, err := db.GetUsers(conn)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println(users)
-
-	// add user
-	user := dao.User{
-		Name: "TEST",
-		Age:  14,
-	}
-	err = db.AddUser(conn, user)
-	if err != nil {
-		panic(err)
+	userService := &service.UserService{
+		Repository: &repository.UserRepository{
+			Pool: pool,
+		},
 	}
 
-	fmt.Println("Users after ADD:")
-	// get users
-	users, err = db.GetUsers(conn)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println(users)
+	r := mux.NewRouter()
+	r.HandleFunc("/users/{id:[0-9]+}", userService.GetUser).Methods(http.MethodGet)
+	r.HandleFunc("/users", userService.GetUsers).Methods(http.MethodGet)
+	r.HandleFunc("/users", userService.AddUser).Methods(http.MethodPost)
+	r.HandleFunc("/users/{id:[0-9]+}", userService.UpdateUser).Methods(http.MethodPut)
+	r.HandleFunc("/users/{id:[0-9]+}", userService.DeleteUser).Methods(http.MethodDelete)
+	r.HandleFunc("/users", userService.DeleteUsers).Methods(http.MethodDelete)
 
-	// delete user
-	err = db.DeleteUser(conn, users[len(users)-1].Id)
-	if err != nil {
-		panic(err)
+	addr := getAddr()
+	if err = http.ListenAndServe(addr, r); err != nil {
+		log.Printf("Error during server working: %s", err)
+		os.Exit(-1)
 	}
+}
 
-	fmt.Println("Users after DELETE:")
-	// get users
-	users, err = db.GetUsers(conn)
-	if err != nil {
-		panic(err)
+func getAddr() string {
+	port := defaultPort
+	if v, exists := os.LookupEnv(portKey); exists {
+		intV, err := strconv.Atoi(v)
+		if err != nil {
+			log.Printf("Environment contains incorrect port format: %s\n", v)
+			log.Printf("Using default port: %v\n", port)
+		} else {
+			port = intV
+		}
 	}
-	fmt.Println(users)
+	host := defaultHost
+	if v, exists := os.LookupEnv(hostKey); exists {
+		host = v
+	}
+	return fmt.Sprintf("%s:%v", host, port)
 }

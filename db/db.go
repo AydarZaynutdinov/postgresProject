@@ -1,45 +1,100 @@
 package db
 
 import (
-	"database/sql"
-	"fmt"
-	_ "github.com/lib/pq"
-	"postgresProject/dao"
+	"github.com/jackc/pgx"
+	_ "github.com/jackc/pgx"
+	"log"
+	"os"
+	"strconv"
 )
 
-const dbName = "test_db"
+const (
+	defaultDbHost = "localhost"
+	defaultDbPort = 5432
+	defaultDbUser = "postgres"
+	defaultDbName = "test_db"
 
-func GetConn() (*sql.DB, error) {
-	connStr := fmt.Sprintf("dbname=%s sslmode=disable", dbName)
-	return sql.Open("postgres", connStr)
-}
+	dbHostKey = "DB_HOST"
+	dbPortKey = "DB_PORT"
+	dbUserKey = "DB_USER"
+	dbNameKey = "DB_NAME"
+)
 
-func GetUsers(db *sql.DB) ([]dao.User, error) {
-	rows, err := db.Query("select * from users")
+func InitDb() (*pgx.ConnPool, error) {
+	pool, err := pgx.NewConnPool(getConnPoolConfig())
 	if err != nil {
+		log.Printf("Error during connect to the db: %s", err)
 		return nil, err
 	}
-	defer rows.Close()
+	return pool, nil
+}
 
-	users := make([]dao.User, 0)
-	for rows.Next() {
-		user := dao.User{}
-		err := rows.Scan(&user.Id, &user.Name, &user.Age)
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
-		users = append(users, user)
+func getConnPoolConfig() pgx.ConnPoolConfig {
+	connConfig := getConnConfig()
+
+	return pgx.ConnPoolConfig{
+		ConnConfig:     connConfig,
+		MaxConnections: 5,
+		AfterConnect:   prepareStatements,
 	}
-	return users, nil
 }
 
-func AddUser(db *sql.DB, user dao.User) error {
-	_, err := db.Exec("insert into users (name, age) values ($1, $2)", user.Name, user.Age)
-	return err
+func getConnConfig() pgx.ConnConfig {
+	dbHost := defaultDbHost
+	dbPort := defaultDbPort
+	dbUser := defaultDbUser
+	dbName := defaultDbName
+
+	if host, exists := os.LookupEnv(dbHostKey); exists {
+		dbHost = host
+	}
+	if port, exists := os.LookupEnv(dbPortKey); exists {
+		intPort, err := strconv.Atoi(port)
+		if err != nil {
+			log.Printf("Environment contains incorrect port format: %s\n", port)
+			log.Printf("Using default port: %v\n", dbPort)
+		} else {
+			dbPort = intPort
+		}
+	}
+	if user, exists := os.LookupEnv(dbUserKey); exists {
+		dbUser = user
+	}
+	if name, exists := os.LookupEnv(dbNameKey); exists {
+		dbName = name
+	}
+
+	return pgx.ConnConfig{
+		Host:     dbHost,
+		Port:     uint16(dbPort),
+		User:     dbUser,
+		Database: dbName,
+	}
 }
 
-func DeleteUser(db *sql.DB, userId int) error {
-	_, err := db.Exec("delete from users where id = $1", userId)
-	return err
+func prepareStatements(conn *pgx.Conn) error {
+	_, err := conn.Prepare("getUser", "SELECT * FROM users WHERE id = $1")
+	if err != nil {
+		log.Printf("Error during preparing statement for the 'getUser' request: %s\n", err)
+		return err
+	}
+
+	_, err = conn.Prepare("addUser", "INSERT INTO users (name, age) VALUES ($1, $2)")
+	if err != nil {
+		log.Printf("Error during preparing statement for the 'addUser' request: %s\n", err)
+		return err
+	}
+
+	_, err = conn.Prepare("deleteUser", "DELETE FROM users WHERE id = $1")
+	if err != nil {
+		log.Printf("Error during preparing statement for the 'deleteUser' request: %s\n", err)
+		return err
+	}
+
+	_, err = conn.Prepare("updateUser", "UPDATE users SET name = $1, age = $2 WHERE id = $3")
+	if err != nil {
+		log.Printf("Error during preparing statement for the 'updateUser' request: %s\n", err)
+		return err
+	}
+	return nil
 }
