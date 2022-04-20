@@ -8,6 +8,7 @@ import (
 	"os"
 	"postgresProject/db"
 	"postgresProject/db/repository"
+	"postgresProject/queue"
 	"postgresProject/service"
 	"strconv"
 )
@@ -28,11 +29,10 @@ func main() {
 	}
 	defer pool.Close()
 
-	userService := &service.UserService{
-		Repository: &repository.UserRepository{
-			Pool: pool,
-		},
-	}
+	rep := &repository.UserRepository{Pool: pool}
+
+	queue.InitKafka(rep)
+	userService := &service.UserService{Repository: rep}
 
 	r := mux.NewRouter()
 	r.HandleFunc("/users/{id:[0-9]+}", userService.GetUser).Methods(http.MethodGet)
@@ -41,6 +41,8 @@ func main() {
 	r.HandleFunc("/users/{id:[0-9]+}", userService.UpdateUser).Methods(http.MethodPut)
 	r.HandleFunc("/users/{id:[0-9]+}", userService.DeleteUser).Methods(http.MethodDelete)
 	r.HandleFunc("/users", userService.DeleteUsers).Methods(http.MethodDelete)
+
+	r.HandleFunc("/queue/users", userService.AddUserViaKafka).Methods(http.MethodPost)
 
 	addr := getAddr()
 	if err = http.ListenAndServe(addr, r); err != nil {

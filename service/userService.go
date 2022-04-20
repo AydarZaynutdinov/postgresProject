@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/mux"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"postgresProject/dao"
 	"postgresProject/db/repository"
+	"postgresProject/queue"
 	"strconv"
 )
 
@@ -195,6 +197,26 @@ func (us *UserService) DeleteUsers(writer http.ResponseWriter, _ *http.Request) 
 
 	writer.WriteHeader(http.StatusOK)
 	_, err = writer.Write([]byte("All users were deleted"))
+	if err != nil {
+		log.Printf("Error during senting response to thre client: %s\n", err)
+	}
+}
+
+func (us *UserService) AddUserViaKafka(writer http.ResponseWriter, request *http.Request) {
+	body, err := io.ReadAll(request.Body)
+	if err != nil {
+		log.Printf("Error during reading body: %s\n", err)
+		http.Error(writer, fmt.Sprintf("Error during reading body: %s", err), http.StatusInternalServerError)
+		return
+	}
+
+	if err = queue.SendMessage(context.Background(), queue.UserTopic, body); err != nil {
+		http.Error(writer, fmt.Sprintf("Error during sending user via queue: %s", err), http.StatusInternalServerError)
+		return
+	}
+
+	writer.WriteHeader(http.StatusOK)
+	_, err = writer.Write([]byte("User was sent via queue"))
 	if err != nil {
 		log.Printf("Error during senting response to thre client: %s\n", err)
 	}
